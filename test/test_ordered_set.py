@@ -47,7 +47,7 @@ def test_indexing():
     assert set1[:] is not set1
     assert set1.copy() is not set1
 
-    assert set1[[1, 2]] == OrderedSet(["b", "r"])
+    assert set1[[1, 2]] == ["b", "r"]
     assert set1[1:3] == OrderedSet(["b", "r"])
     assert set1.index("b") == 1
     assert set1.index(["b", "r"]) == [1, 2]
@@ -78,7 +78,8 @@ class FancyIndexTester:
 def test_fancy_index_class():
     set1 = OrderedSet("abracadabra")
     indexer = FancyIndexTester([1, 0, 4, 3, 0, 2])
-    assert "".join(set1[indexer]) == "badcar"
+    items = set1[indexer]  # type: ignore
+    assert "".join(items) == "badcar"
 
 
 def test_pandas_compat():
@@ -165,14 +166,14 @@ def test_pop():
 def test_getitem_type_error():
     set1 = OrderedSet("ab")
     with pytest.raises(TypeError):
-        set1["a"]
+        set1["a"]  # type: ignore
 
 
 def test_update_value_error():
     set1 = OrderedSet("ab")
     with pytest.raises(ValueError):
         # noinspection PyTypeChecker
-        set1.update(3)
+        set1.update(3)  # type: ignore
 
 
 def test_empty_repr():

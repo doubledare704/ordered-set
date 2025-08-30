@@ -15,8 +15,7 @@ To install it into your current Python environment:
 
 To install the code for development, after checking out the repository:
 
-    pip install flit
-    flit install
+    pip install -e .[dev]
 
 ## Usage examples
 
