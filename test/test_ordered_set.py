@@ -54,6 +54,186 @@ def test_indexing():
     with pytest.raises(KeyError):
         set1.index("br")
 
+    set2 = OrderedSet((("a", "b"), frozenset(("c", "d")), "efg"))
+    assert set2.index(("a", "b")) == 0
+    assert set2.index(frozenset(("c", "d"))) == 1
+    assert set2.index("efg") == 2
+    assert set2.index([frozenset(("c", "d")), ("a", "b")]) == [1, 0]
+    assert set2.index(OrderedSet([frozenset(("c", "d")), ("a", "b")])) == [1, 0]
+    with pytest.raises(KeyError):
+        set2.index(["a", "b"])  # type: ignore[arg-type]
+
+    # Test for Issue #95: frozenset should be treated as atomic, not iterated over
+    set3 = OrderedSet([frozenset([1, 2])])
+    assert set3.index(frozenset([1, 2])) == 0
+
+
+def test_append_inheritance():
+    """Test for Issue #94: append() should call overridden add() method in subclasses"""
+
+    class CustomOrderedSet(OrderedSet):
+        def __init__(self):
+            super().__init__()
+            self.add_called = False
+            self.append_called = False
+
+        def add(self, value):
+            self.add_called = True
+            return super().add(value)
+
+    custom_set = CustomOrderedSet()
+
+    # Test that append() calls the overridden add() method
+    custom_set.append("test")
+    assert custom_set.add_called, "append() should call the overridden add() method"
+    assert "test" in custom_set
+    assert custom_set.index("test") == 0
+
+
+def test_pop_index_consistency():
+    """Test for Issue #83: pop() with non-default index should maintain index consistency"""
+
+    # Test the exact scenario from the issue
+    a = OrderedSet(["a", "b", "c"])
+    assert a.index("b") == 1
+
+    # Pop the first element
+    popped = a.pop(0)
+    assert popped == "a"
+
+    # After popping "a", "b" should now be at index 0
+    assert a.index("b") == 0
+    assert a[0] == "b"
+    assert a[1] == "c"
+
+    # Test popping from the middle
+    b = OrderedSet(["x", "y", "z", "w"])
+    assert b.index("z") == 2
+    assert b.index("w") == 3
+
+    # Pop "y" (index 1)
+    popped = b.pop(1)
+    assert popped == "y"
+
+    # Indices should be updated
+    assert b.index("z") == 1  # was 2, now 1
+    assert b.index("w") == 2  # was 3, now 2
+    assert b[1] == "z"
+    assert b[2] == "w"
+
+    # Test that pop(-1) still works efficiently
+    c = OrderedSet([1, 2, 3, 4, 5])
+    last = c.pop()  # default is -1
+    assert last == 5
+    assert list(c) == [1, 2, 3, 4]
+
+
+def test_item_assignment():
+    """Test for Issue #79: Support item assignment (s[index] = value)"""
+
+    # Basic assignment
+    s = OrderedSet(["foo"])
+    assert s[0] == "foo"
+    s[0] = "bar"
+    assert s[0] == "bar"
+    assert list(s) == ["bar"]
+
+    # Assignment in multi-item set
+    s = OrderedSet(["a", "b", "c"])
+    s[1] = "x"
+    assert list(s) == ["a", "x", "c"]
+    assert s.index("x") == 1
+
+    # Assignment with existing value (should move it)
+    s = OrderedSet(["a", "b", "c"])
+    s[0] = "c"  # Move 'c' from index 2 to index 0
+    assert list(s) == ["c", "b"]
+    assert s.index("c") == 0
+
+    # Assignment with same value at same position (no-op)
+    s = OrderedSet(["a", "b", "c"])
+    s[1] = "b"
+    assert list(s) == ["a", "b", "c"]
+
+    # Negative indices
+    s = OrderedSet(["a", "b", "c"])
+    s[-1] = "z"
+    assert list(s) == ["a", "b", "z"]
+
+    # Index out of range
+    s = OrderedSet(["a"])
+    with pytest.raises(IndexError):
+        s[5] = "x"
+    with pytest.raises(IndexError):
+        s[-5] = "x"
+
+
+def test_item_deletion():
+    """Test for Issue #79: Support item deletion (del s[index])"""
+
+    # Basic deletion
+    s = OrderedSet(["a", "b", "c"])
+    del s[0]
+    assert list(s) == ["b", "c"]
+    assert s.index("b") == 0
+    assert s.index("c") == 1
+
+    # Delete from middle
+    s = OrderedSet(["a", "b", "c", "d"])
+    del s[1]  # Remove 'b'
+    assert list(s) == ["a", "c", "d"]
+    assert s.index("c") == 1
+    assert s.index("d") == 2
+
+    # Delete last item
+    s = OrderedSet(["a", "b", "c"])
+    del s[-1]
+    assert list(s) == ["a", "b"]
+
+    # Delete from single-item set
+    s = OrderedSet(["only"])
+    del s[0]
+    assert list(s) == []
+    assert len(s) == 0
+
+    # Index out of range
+    s = OrderedSet(["a"])
+    with pytest.raises(IndexError):
+        del s[5]
+    with pytest.raises(IndexError):
+        del s[-5]
+
+    # Empty set
+    s = OrderedSet()
+    with pytest.raises(IndexError):
+        del s[0]
+
+
+def test_update_with_iterables():
+    """Test for Issue #85: update() should accept any Iterable, including generators"""
+
+    # Test with generator
+    s = OrderedSet([1, 2])
+    gen = (x for x in [3, 4, 5])
+    s.update(gen)
+    assert list(s) == [1, 2, 3, 4, 5]
+
+    # Test with multiple iterables
+    s = OrderedSet()
+    s.update([1, 2], (3, 4), {5, 6})
+    assert len(s) == 6
+    assert 1 in s and 2 in s and 3 in s and 4 in s and 5 in s and 6 in s
+
+    # Test with string (iterable)
+    s = OrderedSet()
+    s.update("abc")
+    assert list(s) == ["a", "b", "c"]
+
+    # Test with range (iterable)
+    s = OrderedSet()
+    s.update(range(3))
+    assert list(s) == [0, 1, 2]
+
 
 class FancyIndexTester:
     """

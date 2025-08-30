@@ -9,6 +9,7 @@ and released under the MIT license.
 import itertools as it
 from typing import (
     Dict,
+    Hashable,
     Iterable,
     Iterator,
     List,
@@ -31,33 +32,16 @@ __version__ = "4.1.1"
 
 T = TypeVar("T")
 
-# SetLike[T] is either a set of elements of type T, or a sequence, which
-# we will convert to an OrderedSet by adding its elements in order.
-OrderedSetInitializer = Union[AbstractSet[T], Sequence[T], Iterable[T]]
+# OrderedSetInitializer[T] represents any iterable that can be used to initialize
+# or update an OrderedSet. Since AbstractSet and Sequence are both Iterable,
+# we can simplify this to just Iterable[T].
+OrderedSetInitializer = Iterable[T]
 SizedSetLike = Union[AbstractSet[T], Sequence[T]]
 SetLike = Union[SizedSetLike, Iterable[T]]
 
 
-def _is_atomic(obj: object) -> bool:
-    """
-    Returns True for objects which are iterable but should not be iterated in
-    the context of indexing an OrderedSet.
-
-    When we index by an iterable, usually that means we're being asked to look
-    up a list of things.
-
-    However, in the case of the .index() method, we shouldn't handle strings
-    and tuples like other iterables. They're not sequences of things to look
-    up, they're the single, atomic thing we're trying to find.
-
-    As an example, oset.index('hello') should give the index of 'hello' in an
-    OrderedSet of strings. It shouldn't give the indexes of each individual
-    character.
-    """
-    return isinstance(obj, (str, tuple))
-
-
 class OrderedSet(MutableSet[T], Sequence[T]):
+    __slots__ = ("items", "map")
     """
     An OrderedSet is a custom MutableSet that remembers its order, so that
     every entry has an index that can be looked up.
@@ -163,7 +147,14 @@ class OrderedSet(MutableSet[T], Sequence[T]):
             self.items.append(value)
         return self.map[value]
 
-    append = add
+    def append(self, key: T) -> int:
+        """
+        Add `key` as an item to this OrderedSet, then return its index.
+        This method calls self.add() to ensure proper inheritance behavior.
+
+        See documentation_examples.md for usage examples.
+        """
+        return self.add(key)
 
     def update(self, *sequences: OrderedSetInitializer[T]) -> int:
         """
@@ -195,12 +186,12 @@ class OrderedSet(MutableSet[T], Sequence[T]):
         Get the index of a given entry, raising an IndexError if it's not
         present.
 
-        `key` can be an iterable of entries that is not a string, in which case
+        `key` can be an iterable of entries that is not a hashable (string, tuple, frozenset), in which case
         this returns a list of indices.
 
         See documentation_examples.md for usage examples.
         """
-        if isinstance(key, Iterable) and not _is_atomic(key):
+        if isinstance(key, Iterable) and not isinstance(key, Hashable):
             key_as_seq = cast(Sequence[T], key)
             return [self.index(subkey) for subkey in key_as_seq]
         # At this point, key must be of type T (single element, not a sequence)
@@ -225,8 +216,76 @@ class OrderedSet(MutableSet[T], Sequence[T]):
 
         elem = self.items[index]
         del self.items[index]
-        del self.map[elem]
+
+        # Rebuild the mapping to ensure indices are correct
+        # This is necessary when removing from the middle of the set
+        self.map = {item: i for i, item in enumerate(self.items)}
+
         return elem
+
+    def __setitem__(self, index: int, value: T) -> None:
+        """
+        Replace the item at the given index with a new value.
+
+        If the new value is already in the set at a different position,
+        it will be removed from its old position first.
+
+        Args:
+            index: The index of the item to replace
+            value: The new value to place at this index
+
+        Raises:
+            IndexError: If index is out of range
+        """
+        if not (-len(self.items) <= index < len(self.items)):
+            raise IndexError("list index out of range")
+
+        # Convert negative indices to positive
+        if index < 0:
+            index += len(self.items)
+
+        old_value = self.items[index]
+
+        # If the new value is already in the set, remove it first
+        if value in self.map:
+            old_index = self.map[value]
+            if old_index == index:
+                # Same value at same position, nothing to do
+                return
+            # Remove the value from its old position
+            del self.items[old_index]
+            # Adjust our target index if it was after the removed item
+            if old_index < index:
+                index -= 1
+
+        # Update the item at the target index
+        self.items[index] = value
+
+        # Rebuild the mapping to ensure all indices are correct
+        self.map = {item: i for i, item in enumerate(self.items)}
+
+    def __delitem__(self, index: int) -> None:
+        """
+        Remove the item at the given index.
+
+        Args:
+            index: The index of the item to remove
+
+        Raises:
+            IndexError: If index is out of range
+        """
+        if not (-len(self.items) <= index < len(self.items)):
+            raise IndexError("list index out of range")
+
+        # Convert negative indices to positive
+        if index < 0:
+            index += len(self.items)
+
+        # Remove the item
+        del self.items[index]
+
+        # Rebuild the mapping to ensure all indices are correct
+        self.map = {item: i for i, item in enumerate(self.items)}
 
     def discard(self, value: T) -> None:
         """
@@ -303,8 +362,7 @@ class OrderedSet(MutableSet[T], Sequence[T]):
         cls: type = OrderedSet
         if isinstance(self, OrderedSet):
             cls = self.__class__
-        containers = map(list, it.chain([self], sets))
-        items = it.chain.from_iterable(containers)
+        items = it.chain(self, *sets)
         return cls(items)
 
     def __and__(self, other: SetLike[T]) -> "OrderedSet[T]":
